@@ -1,6 +1,6 @@
 # rtlhub-sync
 
-An automated Python pipeline that extracts solved SystemVerilog problems from RTLHub and synchronizes them to a target GitHub repository `rtlhub-solutions`.
+An automated Python pipeline that extracts my solutions to solved problems from [RTLHub](https://rtlhub.com) and synchronizes them to a target GitHub repository `rtlhub-solutions`.
 
 ## Tech Stack
 * **Playwright:** Handles headless browser automation, tab navigation, dialog auto-acceptance, and runtime JavaScript injection into the Monaco Editor.
