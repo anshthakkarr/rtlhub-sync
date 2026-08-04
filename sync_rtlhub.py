@@ -7,9 +7,8 @@ from github import Github, Auth, GithubException
 
 load_dotenv()
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-
 if not GITHUB_TOKEN:
-    raise ValueError("[!] GITHUB_TOKEN is missing! Please set it in your .env file.")
+    raise ValueError("[!] GITHUB_TOKEN missing! Please check your .env file.")
 
 REPO_NAME = "rtlhub-solutions"
 
@@ -30,19 +29,23 @@ def apply_solved_filter(page):
         print(f"Note: Could not set Status filter: {e}")
         page.keyboard.press("Escape")
 
-def clean_filename(title):
-    """Converts problem title into a valid .sv filename."""
-    name = title.lower()
+def clean_slug(text):
+    """Converts problem titles or filenames into clean, standard identifiers."""
+    name = text.lower().strip()
     name = name.replace(":", "_").replace("-", "_").replace(" ", "_")
-    name = re.sub(r"[^a-z0-9_]", "", name)
+    name = re.sub(r"[^a-z0-9_.]", "", name)
     name = re.sub(r"_+", "_", name).strip("_")
-    return f"{name}.sv"
+    return name
 
 def get_monaco_code(page):
-    """Retrieves code directly from Monaco Editor JS runtime."""
+    """Retrieves code directly from the active Monaco Editor JS model."""
     try:
         return page.evaluate("""() => {
             if (window.monaco && window.monaco.editor) {
+                const editors = window.monaco.editor.getEditors();
+                if (editors.length > 0 && editors[0].getModel()) {
+                    return editors[0].getModel().getValue();
+                }
                 const models = window.monaco.editor.getModels();
                 if (models.length > 0) {
                     return models[0].getValue();
@@ -82,7 +85,7 @@ def sync_solutions():
 
         # Handle dialogs automatically ("Load last passing solution?")
         def handle_dialog(dialog):
-            print(f" -> Auto-accepting dialog: '{dialog.message[:35]}...'")
+            print(f"    -> Auto-accepting dialog: '{dialog.message[:35]}...'")
             dialog.accept()
 
         page.on("dialog", handle_dialog)
@@ -123,9 +126,6 @@ def sync_solutions():
                 time.sleep(1)
                 apply_solved_filter(page)
 
-            filename = clean_filename(title)
-            file_path = f"solutions/{filename}"
-
             # Open card
             try:
                 card_to_click = page.locator("div").filter(has_text=re.compile(rf"^{re.escape(title)}$", re.IGNORECASE)).first
@@ -138,62 +138,93 @@ def sync_solutions():
                 print(f"Could not open card '{title}': {e}")
                 continue
 
-            time.sleep(2)  # Wait for page layout
+            time.sleep(2)  # Wait for page layout and tabs to render
 
-            # Click "Load your last passing solution" button
-            try:
-                load_btn = page.locator("[title*='last passing solution'], [aria-label*='last passing solution']").first
-                if load_btn.count() > 0 and load_btn.is_visible():
-                    print(" -> Clicking 'Load last passing solution'...")
-                    load_btn.click()
-                else:
-                    page.locator("button").filter(has=page.locator("svg")).nth(1).click()
-            except Exception as e:
-                print(f" -> Could not click load solution button: {e}")
+            # Detect editor tabs
+            tab_elements = page.locator("button, div, span").filter(has_text=re.compile(r"^[a-zA-Z0-9_]+\.sv$")).all()
+            
+            tabs = []
+            for elem in tab_elements:
+                txt = elem.inner_text().strip()
+                if txt.endswith(".sv") and txt not in tabs:
+                    tabs.append(txt)
 
-            # Poll Monaco Editor until actual solution code is populated
-            code_text = ""
-            for _ in range(10):
-                code_text = get_monaco_code(page)
-                if code_text and len(code_text.strip()) > 15:
-                    break
-                time.sleep(0.5)
+            folder_slug = clean_slug(title)
+            is_multi_file = len(tabs) > 1
 
-            clean_code = code_text.strip()
-            if not clean_code or len(clean_code) <= 10:
-                print(f"[!] Skipping {title}: Could not fetch valid solution code.")
-                continue
+            if is_multi_file:
+                print(f" -> Multi-file problem detected ({len(tabs)} files). Target folder: solutions/{folder_slug}/")
+            else:
+                tabs = [tabs[0]] if tabs else [f"{folder_slug}.sv"]
 
-            # Check existing content on GitHub to avoid redundant commits
-            try:
-                existing_file = repo.get_contents(file_path)
-                existing_content = existing_file.decoded_content.decode("utf-8").strip()
+            # Loop through each file/tab for the problem
+            for tab_name in tabs:
+                clean_tab_filename = clean_slug(tab_name)
+                if not clean_tab_filename.endswith(".sv"):
+                    clean_tab_filename += ".sv"
 
-                # Normalize line endings (\r\n vs \n) for accurate comparison
-                existing_normalized = existing_content.replace("\r\n", "\n")
-                new_normalized = clean_code.replace("\r\n", "\n")
+                if is_multi_file:
+                    print(f"  [Tab: {tab_name}]")
+                    try:
+                        tab_click_target = page.locator("button, div, span").filter(has_text=re.compile(rf"^{re.escape(tab_name)}$")).first
+                        tab_click_target.click()
+                        time.sleep(0.5)
+                    except Exception as e:
+                        print(f"   -> Warning: Could not click tab '{tab_name}': {e}")
 
-                if existing_normalized == new_normalized:
-                    print(f" -> File '{file_path}' is up to date. Skipping commit.")
+                # Click "Load last passing solution" button
+                try:
+                    load_btn = page.locator("[title*='last passing solution'], [aria-label*='last passing solution']").first
+                    if load_btn.count() > 0 and load_btn.is_visible():
+                        load_btn.click()
+                    else:
+                        page.locator("button").filter(has=page.locator("svg")).nth(1).click()
+                except Exception as e:
+                    print(f"   -> Could not click load solution button: {e}")
+
+                # Poll Monaco Editor every 0.5s
+                code_text = ""
+                for _ in range(10):
+                    code_text = get_monaco_code(page)
+                    if code_text and len(code_text.strip()) > 15:
+                        break
+                    time.sleep(0.5)
+
+                clean_code = code_text.strip()
+                if not clean_code or len(clean_code) <= 10:
+                    print(f"   [!] Skipping {tab_name}: Code empty or unreadable.")
                     continue
 
-                # File exists but content changed -> Update it
-                repo.update_file(
-                    path=file_path,
-                    message=f"Update RTLHub solution: {title}",
-                    content=clean_code,
-                    sha=existing_file.sha
-                )
-                print(f" -> Updated {file_path} on GitHub.")
+                # Determine target path on GitHub
+                if is_multi_file:
+                    file_path = f"solutions/{folder_slug}/{clean_tab_filename}"
+                else:
+                    file_path = f"solutions/{folder_slug}.sv"
 
-            except GithubException:
-                # File does not exist yet -> Create it
-                repo.create_file(
-                    path=file_path,
-                    message=f"Add RTLHub solution: {title}",
-                    content=clean_code
-                )
-                print(f" -> Added {file_path} to GitHub.")
+                # Content comparison check before committing
+                try:
+                    existing_file = repo.get_contents(file_path)
+                    existing_content = existing_file.decoded_content.decode("utf-8").strip()
+
+                    if existing_content.replace("\r\n", "\n") == clean_code.replace("\r\n", "\n"):
+                        print(f"   -> Path '{file_path}' is up to date. Skipping commit.")
+                        continue
+
+                    repo.update_file(
+                        path=file_path,
+                        message=f"Update RTLHub solution: {title} ({tab_name})",
+                        content=clean_code,
+                        sha=existing_file.sha
+                    )
+                    print(f"   -> Updated {file_path} on GitHub.")
+
+                except GithubException:
+                    repo.create_file(
+                        path=file_path,
+                        message=f"Add RTLHub solution: {title} ({tab_name})",
+                        content=clean_code
+                    )
+                    print(f"   -> Created {file_path} on GitHub.")
 
         context.close()
         print("\nSync completed successfully!")
