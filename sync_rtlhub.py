@@ -19,12 +19,12 @@ def apply_solved_filter(page):
         
         if "Solved" not in status_btn.inner_text():
             status_btn.click()
-            time.sleep(0.5)
+            # time.sleep(0.5)
             page.locator("text=Solved").first.click()
-            time.sleep(0.5)
+            # time.sleep(0.5)
         
         page.keyboard.press("Escape")
-        time.sleep(0.5)
+        # time.sleep(0.5)
     except Exception as e:
         print(f"Note: Could not set Status filter: {e}")
         page.keyboard.press("Escape")
@@ -92,7 +92,7 @@ def sync_solutions():
 
         print("Navigating to RTLHub problems page...")
         page.goto("https://rtlhub.com/problems", wait_until="networkidle")
-        time.sleep(2)
+        time.sleep(0.5)
 
         if "login" in page.url:
             print("\n[!] Session expired. Please run `python3 login_once.py` first.")
@@ -123,7 +123,7 @@ def sync_solutions():
             
             if "problems" not in page.url:
                 page.goto("https://rtlhub.com/problems", wait_until="networkidle")
-                time.sleep(1)
+                time.sleep(0.5)
                 apply_solved_filter(page)
 
             # Open card
@@ -138,7 +138,7 @@ def sync_solutions():
                 print(f"Could not open card '{title}': {e}")
                 continue
 
-            time.sleep(2)  # Wait for page layout and tabs to render
+            time.sleep(0.5)  # Wait for page layout and tabs to render
 
             # Detect editor tabs
             tab_elements = page.locator("button, div, span").filter(has_text=re.compile(r"^[a-zA-Z0-9_]+\.sv$")).all()
@@ -168,7 +168,7 @@ def sync_solutions():
                     try:
                         tab_click_target = page.locator("button, div, span").filter(has_text=re.compile(rf"^{re.escape(tab_name)}$")).first
                         tab_click_target.click()
-                        time.sleep(0.5)
+                        # time.sleep(0.5)
                     except Exception as e:
                         print(f"   -> Warning: Could not click tab '{tab_name}': {e}")
 
