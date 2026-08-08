@@ -1,4 +1,3 @@
-# login_once.py
 from playwright.sync_api import sync_playwright
 
 def save_session():
@@ -24,3 +23,4 @@ def save_session():
 
 if __name__ == "__main__":
     save_session()
+    

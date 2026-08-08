@@ -1,4 +1,3 @@
-# sync_rtlhub.py
 import os
 import time
 import re
