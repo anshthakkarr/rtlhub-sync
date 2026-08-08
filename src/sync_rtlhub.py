@@ -1,3 +1,4 @@
+# sync_rtlhub.py
 import os
 import time
 import re
@@ -37,24 +38,80 @@ def clean_slug(text):
     name = re.sub(r"_+", "_", name).strip("_")
     return name
 
-def get_monaco_code(page):
-    """Retrieves code directly from the active Monaco Editor JS model."""
+def get_monaco_code(page, tab_name=""):
+    """Retrieves code matching the target tab/module from Monaco Editor instances."""
     try:
-        return page.evaluate("""() => {
-            if (window.monaco && window.monaco.editor) {
-                const editors = window.monaco.editor.getEditors();
-                if (editors.length > 0 && editors[0].getModel()) {
-                    return editors[0].getModel().getValue();
+        return page.evaluate("""(targetTab) => {
+            if (!window.monaco || !window.monaco.editor) return "";
+            
+            const editors = window.monaco.editor.getEditors();
+            if (editors.length === 0) return "";
+
+            // Clean tab name to match Verilog module identifier (e.g. "dff_sync_reset.sv" -> "dff_sync_reset")
+            const cleanTarget = targetTab ? targetTab.replace(/\\.sv$/i, "").toLowerCase().trim() : "";
+
+            // Try matching code that contains "module <cleanTarget>"
+            if (cleanTarget) {
+                for (const ed of editors) {
+                    const isReadOnly = ed.getRawOptions ? ed.getRawOptions().readOnly : false;
+                    if (!isReadOnly && ed.getModel()) {
+                        const code = ed.getModel().getValue();
+                        if (code.toLowerCase().includes("module " + cleanTarget)) {
+                            return code;
+                        }
+                    }
                 }
+
+                // Try matching models directly
                 const models = window.monaco.editor.getModels();
-                if (models.length > 0) {
-                    return models[0].getValue();
+                for (const mod of models) {
+                    const code = mod.getValue();
+                    if (code.toLowerCase().includes("module " + cleanTarget)) {
+                        return code;
+                    }
+                }
+            }
+
+            // Fallback: return the first editable editor with content
+            for (const ed of editors) {
+                const isReadOnly = ed.getRawOptions ? ed.getRawOptions().readOnly : false;
+                if (!isReadOnly && ed.getModel()) {
+                    const code = ed.getModel().getValue();
+                    if (code.trim().length > 10) return code;
                 }
             }
             return "";
-        }""")
-    except Exception:
+        }""", tab_name)
+    except Exception as e:
+        print(f"   -> Error reading Monaco code: {e}")
         return ""
+
+def click_code_tab(page, tab_name):
+    """Finds and clicks an editor tab in the right-side Code panel."""
+    try:
+        elements = page.get_by_text(tab_name).all()
+        for elem in reversed(elements):
+            if not elem.is_visible():
+                continue
+
+            is_ref = elem.evaluate("""el => {
+                let curr = el;
+                while (curr && curr !== document.body) {
+                    if (curr.innerText && curr.innerText.includes('Reference Files') && !curr.innerText.includes('Code')) {
+                        return true;
+                    }
+                    curr = curr.parentElement;
+                }
+                return false;
+            }""")
+
+            if not is_ref:
+                elem.click(force=True)
+                time.sleep(1.0)
+                return True
+    except Exception as e:
+        print(f"   -> Could not click tab '{tab_name}': {e}")
+    return False
 
 def sync_solutions():
     auth = Auth.Token(GITHUB_TOKEN)
@@ -83,7 +140,6 @@ def sync_solutions():
         
         page = context.pages[0] if context.pages else context.new_page()
 
-        # Handle dialogs automatically ("Load last passing solution?")
         def handle_dialog(dialog):
             print(f"    -> Auto-accepting dialog: '{dialog.message[:35]}...'")
             dialog.accept()
@@ -102,7 +158,6 @@ def sync_solutions():
         print("Filtering by Status: Solved...")
         apply_solved_filter(page)
 
-        # Extract solved problem titles
         card_locators = page.locator("div").filter(has_text=re.compile(r"Beginner|Easy|Medium|Hard")).all()
         
         solved_titles = []
@@ -126,7 +181,6 @@ def sync_solutions():
                 time.sleep(0.5)
                 apply_solved_filter(page)
 
-            # Open card
             try:
                 card_to_click = page.locator("div").filter(has_text=re.compile(rf"^{re.escape(title)}$", re.IGNORECASE)).first
                 if card_to_click.count() == 0:
@@ -138,16 +192,32 @@ def sync_solutions():
                 print(f"Could not open card '{title}': {e}")
                 continue
 
-            time.sleep(0.5)  # Wait for page layout and tabs to render
+            time.sleep(0.5)
 
-            # Detect editor tabs
-            tab_elements = page.locator("button, div, span").filter(has_text=re.compile(r"^[a-zA-Z0-9_]+\.sv$")).all()
+            tab_elements = page.locator("button, div, span").filter(has_text=re.compile(r"\.sv")).all()
             
             tabs = []
             for elem in tab_elements:
                 txt = elem.inner_text().strip()
-                if txt.endswith(".sv") and txt not in tabs:
-                    tabs.append(txt)
+                match = re.search(r"([a-zA-Z0-9_]+\.sv)", txt)
+                if not match:
+                    continue
+                
+                clean_filename = match.group(1)
+
+                is_ref_tab = elem.evaluate("""el => {
+                    let curr = el;
+                    while (curr && curr !== document.body) {
+                        if (curr.innerText && curr.innerText.includes('Reference Files') && !curr.innerText.includes('Code')) {
+                            return true;
+                        }
+                        curr = curr.parentElement;
+                    }
+                    return false;
+                }""")
+
+                if not is_ref_tab and clean_filename not in tabs:
+                    tabs.append(clean_filename)
 
             folder_slug = clean_slug(title)
             is_multi_file = len(tabs) > 1
@@ -157,7 +227,6 @@ def sync_solutions():
             else:
                 tabs = [tabs[0]] if tabs else [f"{folder_slug}.sv"]
 
-            # Loop through each file/tab for the problem
             for tab_name in tabs:
                 clean_tab_filename = clean_slug(tab_name)
                 if not clean_tab_filename.endswith(".sv"):
@@ -165,12 +234,7 @@ def sync_solutions():
 
                 if is_multi_file:
                     print(f"  [Tab: {tab_name}]")
-                    try:
-                        tab_click_target = page.locator("button, div, span").filter(has_text=re.compile(rf"^{re.escape(tab_name)}$")).first
-                        tab_click_target.click()
-                        # time.sleep(0.5)
-                    except Exception as e:
-                        print(f"   -> Warning: Could not click tab '{tab_name}': {e}")
+                    click_code_tab(page, tab_name)
 
                 # Click "Load last passing solution" button
                 try:
@@ -179,23 +243,25 @@ def sync_solutions():
                         load_btn.click()
                     else:
                         page.locator("button").filter(has=page.locator("svg")).nth(1).click()
+                    
+                    time.sleep(0.5)
                 except Exception as e:
                     print(f"   -> Could not click load solution button: {e}")
 
-                # Poll Monaco Editor every 0.5s
+                # Extract code matching the specific tab filename
                 code_text = ""
                 for _ in range(10):
-                    code_text = get_monaco_code(page)
+                    code_text = get_monaco_code(page, tab_name)
                     if code_text and len(code_text.strip()) > 15:
                         break
                     time.sleep(0.5)
 
                 clean_code = code_text.strip()
+
                 if not clean_code or len(clean_code) <= 10:
                     print(f"   [!] Skipping {tab_name}: Code empty or unreadable.")
                     continue
 
-                # Determine target path on GitHub
                 if is_multi_file:
                     file_path = f"solutions/{folder_slug}/{clean_tab_filename}"
                 else:
