@@ -1,6 +1,6 @@
 # rtlhub-sync
 
-An automated Python pipeline that extracts solved SystemVerilog problems from RTLHub and synchronizes them to a target GitHub repository `rtlhub-solutions`.
+An automated Python pipeline that extracts my solutions to solved problems from [RTLHub](https://rtlhub.com) and synchronizes them to a target GitHub repository `rtlhub-solutions`.
 
 ## Tech Stack
 * **Playwright:** Handles headless browser automation, tab navigation, dialog auto-acceptance, and runtime JavaScript injection into the Monaco Editor.
@@ -18,12 +18,12 @@ playwright install chromium
 
 1. **Establish Session (one-time).** Launches the browser to log in manually. The session profile is saved locally to `./rtlhub_session`.
    ```
-   python3 login_once.py
+   python3 src/login_once.py
    ```
 
 2. **Run Sync.** Executes the main automated extraction and pushes updated solutions to GitHub.
    ```
-   python3 sync_rtlhub.py
+   python3 src/sync_rtlhub.py
    ```
 
 
