@@ -1,4 +1,3 @@
-# sync_rtlhub.py
 import os
 import time
 import re
@@ -14,21 +13,30 @@ if not GITHUB_TOKEN:
 REPO_NAME = "rtlhub-solutions"
 
 def apply_solved_filter(page):
-    """Clicks the Status dropdown, selects 'Solved', and closes any dropdown menu overlay."""
+    """Clicks the Status dropdown, selects 'Solved', and guarantees overlay dismissal."""
     try:
         status_btn = page.locator("button, div").filter(has_text=re.compile(r"^Status:")).first
-        
-        if "Solved" not in status_btn.inner_text():
-            status_btn.click()
-            # time.sleep(0.5)
-            page.locator("text=Solved").first.click()
-            # time.sleep(0.5)
-        
+
+        if status_btn.count() > 0:
+            current_text = status_btn.inner_text()
+            if "Solved" not in current_text:
+                status_btn.click()
+                # time.sleep(0.5)
+                
+                solved_option = page.get_by_text("Solved", exact=True).first
+                if solved_option.is_visible():
+                    solved_option.click()
+                    # time.sleep(0.5)
+
+        # Dismiss dropdown overlay: press Escape AND click neutral screen coordinates (10, 10)
         page.keyboard.press("Escape")
+        # time.sleep(0.2)
+        page.mouse.click(10, 10)
         # time.sleep(0.5)
     except Exception as e:
         print(f"Note: Could not set Status filter: {e}")
         page.keyboard.press("Escape")
+        page.mouse.click(10, 10)
 
 def clean_slug(text):
     """Converts problem titles or filenames into clean, standard identifiers."""
@@ -108,7 +116,7 @@ def click_code_tab(page, tab_name):
 
             if not is_ref:
                 elem.click(force=True)
-                time.sleep(1.0)
+                time.sleep(0.2)
                 return True
     except Exception as e:
         print(f"   -> Could not click tab '{tab_name}': {e}")
@@ -123,6 +131,10 @@ def sync_solutions():
         repo = user.get_repo(REPO_NAME)
     except GithubException:
         repo = user.create_repo(REPO_NAME, description="My RTLHub Solutions")
+
+    # Track commit stats
+    committed_count = 0
+    skipped_count = 0
 
     with sync_playwright() as p:
         context = p.chromium.launch_persistent_context(
@@ -149,7 +161,7 @@ def sync_solutions():
 
         print("Navigating to RTLHub problems page...")
         page.goto("https://rtlhub.com/problems", wait_until="networkidle")
-        time.sleep(0.5)
+        time.sleep(0.2)
 
         if "login" in page.url:
             print("\n[!] Session expired. Please run `python3 login_once.py` first.")
@@ -179,7 +191,7 @@ def sync_solutions():
             
             if "problems" not in page.url:
                 page.goto("https://rtlhub.com/problems", wait_until="networkidle")
-                time.sleep(0.5)
+                time.sleep(0.2)
                 apply_solved_filter(page)
 
             try:
@@ -187,13 +199,13 @@ def sync_solutions():
                 if card_to_click.count() == 0:
                     card_to_click = page.get_by_text(title, exact=True).first
                 
-                card_to_click.click()
+                card_to_click.click(force=True)
                 page.wait_for_url("**/problem/**", timeout=7000)
             except Exception as e:
                 print(f"Could not open card '{title}': {e}")
                 continue
 
-            time.sleep(0.5)
+            time.sleep(0.2)
 
             # Detect editor tabs (.sv or .v files) while filtering OUT tabs inside the "Reference Files" panel
             tab_elements = page.locator("button, div, span").filter(has_text=re.compile(r"\.(sv|v)", re.IGNORECASE)).all()
@@ -244,11 +256,11 @@ def sync_solutions():
                 try:
                     load_btn = page.locator("[title*='last passing solution'], [aria-label*='last passing solution']").first
                     if load_btn.count() > 0 and load_btn.is_visible():
-                        load_btn.click()
+                        load_btn.click(force=True)
                     else:
-                        page.locator("button").filter(has=page.locator("svg")).nth(1).click()
+                        page.locator("button").filter(has=page.locator("svg")).nth(1).click(force=True)
                     
-                    time.sleep(1.5)
+                    time.sleep(0.2)
                 except Exception as e:
                     print(f"   -> Could not click load solution button: {e}")
 
@@ -258,12 +270,13 @@ def sync_solutions():
                     code_text = get_monaco_code(page, tab_name)
                     if code_text and len(code_text.strip()) > 15:
                         break
-                    time.sleep(0.5)
+                    time.sleep(0.2)
 
                 clean_code = code_text.strip()
 
                 if not clean_code or len(clean_code) <= 10:
                     print(f"   [!] Skipping {tab_name}: Code empty or unreadable.")
+                    skipped_count += 1
                     continue
 
                 if is_multi_file:
@@ -278,6 +291,7 @@ def sync_solutions():
 
                     if existing_content.replace("\r\n", "\n") == clean_code.replace("\r\n", "\n"):
                         print(f"   -> Path '{file_path}' is up to date. Skipping commit.")
+                        skipped_count += 1
                         continue
 
                     repo.update_file(
@@ -287,6 +301,7 @@ def sync_solutions():
                         sha=existing_file.sha
                     )
                     print(f"   -> Updated {file_path} on GitHub.")
+                    committed_count += 1
 
                 except GithubException:
                     repo.create_file(
@@ -295,9 +310,11 @@ def sync_solutions():
                         content=clean_code
                     )
                     print(f"   -> Created {file_path} on GitHub.")
+                    committed_count += 1
 
         context.close()
         print("\nSync completed successfully!")
+        print(f"Summary: {committed_count} files committed, {skipped_count} files skipped.")
 
 if __name__ == "__main__":
     sync_solutions()
