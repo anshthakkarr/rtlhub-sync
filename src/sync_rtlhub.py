@@ -1,3 +1,4 @@
+# sync_rtlhub.py
 import os
 import time
 import re
@@ -38,7 +39,7 @@ def clean_slug(text):
     return name
 
 def get_monaco_code(page, tab_name=""):
-    """Retrieves code matching the target tab/module from Monaco Editor instances."""
+    """Retrieves code matching the target tab/module (.sv or .v) from Monaco Editor instances."""
     try:
         return page.evaluate("""(targetTab) => {
             if (!window.monaco || !window.monaco.editor) return "";
@@ -46,8 +47,8 @@ def get_monaco_code(page, tab_name=""):
             const editors = window.monaco.editor.getEditors();
             if (editors.length === 0) return "";
 
-            // Clean tab name to match Verilog module identifier (e.g. "dff_sync_reset.sv" -> "dff_sync_reset")
-            const cleanTarget = targetTab ? targetTab.replace(/\\.sv$/i, "").toLowerCase().trim() : "";
+            // Clean tab name to match Verilog/SV module identifier (e.g. "my_module.v" -> "my_module")
+            const cleanTarget = targetTab ? targetTab.replace(/\\.(sv|v)$/i, "").toLowerCase().trim() : "";
 
             // Try matching code that contains "module <cleanTarget>"
             if (cleanTarget) {
@@ -79,6 +80,7 @@ def get_monaco_code(page, tab_name=""):
                     if (code.trim().length > 10) return code;
                 }
             }
+
             return "";
         }""", tab_name)
     except Exception as e:
@@ -193,12 +195,13 @@ def sync_solutions():
 
             time.sleep(0.5)
 
-            tab_elements = page.locator("button, div, span").filter(has_text=re.compile(r"\.sv")).all()
+            # Detect editor tabs (.sv or .v files) while filtering OUT tabs inside the "Reference Files" panel
+            tab_elements = page.locator("button, div, span").filter(has_text=re.compile(r"\.(sv|v)", re.IGNORECASE)).all()
             
             tabs = []
             for elem in tab_elements:
                 txt = elem.inner_text().strip()
-                match = re.search(r"([a-zA-Z0-9_]+\.sv)", txt)
+                match = re.search(r"([a-zA-Z0-9_]+\.(?:sv|v))", txt, re.IGNORECASE)
                 if not match:
                     continue
                 
@@ -228,7 +231,9 @@ def sync_solutions():
 
             for tab_name in tabs:
                 clean_tab_filename = clean_slug(tab_name)
-                if not clean_tab_filename.endswith(".sv"):
+                
+                # Ensure appropriate Verilog / SystemVerilog file extension is kept or appended
+                if not (clean_tab_filename.endswith(".sv") or clean_tab_filename.endswith(".v")):
                     clean_tab_filename += ".sv"
 
                 if is_multi_file:
@@ -243,7 +248,7 @@ def sync_solutions():
                     else:
                         page.locator("button").filter(has=page.locator("svg")).nth(1).click()
                     
-                    time.sleep(0.5)
+                    time.sleep(1.5)
                 except Exception as e:
                     print(f"   -> Could not click load solution button: {e}")
 
@@ -264,7 +269,7 @@ def sync_solutions():
                 if is_multi_file:
                     file_path = f"solutions/{folder_slug}/{clean_tab_filename}"
                 else:
-                    file_path = f"solutions/{folder_slug}.sv"
+                    file_path = f"solutions/{folder_slug}{'.v' if clean_tab_filename.endswith('.v') else '.sv'}"
 
                 # Content comparison check before committing
                 try:
