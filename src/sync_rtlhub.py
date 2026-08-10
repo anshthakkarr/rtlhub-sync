@@ -116,7 +116,7 @@ def click_code_tab(page, tab_name):
 
             if not is_ref:
                 elem.click(force=True)
-                time.sleep(0.2)
+                time.sleep(0.5)
                 return True
     except Exception as e:
         print(f"   -> Could not click tab '{tab_name}': {e}")
@@ -132,7 +132,6 @@ def sync_solutions():
     except GithubException:
         repo = user.create_repo(REPO_NAME, description="My RTLHub Solutions")
 
-    # Track commit stats
     committed_count = 0
     skipped_count = 0
 
@@ -161,7 +160,7 @@ def sync_solutions():
 
         print("Navigating to RTLHub problems page...")
         page.goto("https://rtlhub.com/problems", wait_until="networkidle")
-        time.sleep(0.2)
+        time.sleep(0.5)
 
         if "login" in page.url:
             print("\n[!] Session expired. Please run `python3 login_once.py` first.")
@@ -191,7 +190,7 @@ def sync_solutions():
             
             if "problems" not in page.url:
                 page.goto("https://rtlhub.com/problems", wait_until="networkidle")
-                time.sleep(0.2)
+                time.sleep(0.5)
                 apply_solved_filter(page)
 
             try:
@@ -205,7 +204,7 @@ def sync_solutions():
                 print(f"Could not open card '{title}': {e}")
                 continue
 
-            time.sleep(0.2)
+            time.sleep(0.5)
 
             # Detect editor tabs (.sv or .v files) while filtering OUT tabs inside the "Reference Files" panel
             tab_elements = page.locator("button, div, span").filter(has_text=re.compile(r"\.(sv|v)", re.IGNORECASE)).all()
@@ -244,7 +243,6 @@ def sync_solutions():
             for tab_name in tabs:
                 clean_tab_filename = clean_slug(tab_name)
                 
-                # Ensure appropriate Verilog / SystemVerilog file extension is kept or appended
                 if not (clean_tab_filename.endswith(".sv") or clean_tab_filename.endswith(".v")):
                     clean_tab_filename += ".sv"
 
@@ -260,7 +258,7 @@ def sync_solutions():
                     else:
                         page.locator("button").filter(has=page.locator("svg")).nth(1).click(force=True)
                     
-                    time.sleep(0.2)
+                    time.sleep(0.5)
                 except Exception as e:
                     print(f"   -> Could not click load solution button: {e}")
 
